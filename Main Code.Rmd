@@ -1,0 +1,111 @@
+---
+title: "Main Code"
+author: "Nicholas Kwak"
+date: "3/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Main Data
+Data is from https://api.nytimes.com/
+
+```{r}
+#Packages and .Renviron file
+library(jsonlite)
+library(httr)
+library(tidyverse)
+readRenviron(".Renviron")
+```
+
+
+## Dataframe showing all types of the NYT bestsellers list
+```{r}
+genre = GET(
+  str_glue("https://api.nytimes.com/svc/books/v3/lists/names.json?api-key={id}", 
+           id = Sys.getenv("NYT_KEY")),
+
+  add_headers(Authorization = paste("Bearer", Sys.getenv("NYT_KEY"))),
+  query = list(
+  )
+)
+stop_for_status(genre)
+json = content(genre, as = "text", encoding = "UTF-8")
+genre_df = as.data.frame(fromJSON(json, flatten = TRUE)$results)
+genre_df
+
+```
+
+##  filtering the list for nonfiction lists updated weekly.
+```{r}
+nf_df = genre_df %>% filter( grepl( "Nonfiction" , list_name), 
+                             grepl("2021", newest_published_date), 
+                             updated == "WEEKLY")
+nf_df
+```
+
+## Finding bestsellers for nonfiction titles (list updates are every Sunday)
+## Can only handle 10 loops before it crashes
+```{r}
+# Dates eligible for march, code to get the list
+mar_date = c("2021-03-07", "2021-03-14", "2021-03-21")
+ln_encoded = nf_df$list_name_encoded
+# Make sure we start off with a blank data frame.
+bseller_df = NULL
+
+for(i in 1:nrow(nf_df))
+{
+  for(j in 1:length(mar_date))
+  {
+    bseller_url = "https://api.nytimes.com/svc/books/v3/lists/{date}/{list}.json?api-key= {id}"
+    nf_list = GET(
+      str_glue(bseller_url, 
+               date = mar_date[j],
+               list = ln_encoded[i],
+               id = Sys.getenv("NYT_KEY")),
+      add_headers(Authorization = paste("Bearer", Sys.getenv("NYT_KEY"))),
+      query = list(
+      )
+    )
+    stop_for_status(nf_list)
+    json2 = content(nf_list, as = "text", encoding = "UTF-8")
+    # New columns I plan on including in the dataset
+    date_published = mar_date[j]; book_type = nf_df$list_name[i]
+    if (is.null(bseller_df) == TRUE)
+      {
+        # creates a new data frame and binds extra columns.
+        bseller_df = as.data.frame(fromJSON(json2)$results$books)
+        bseller_df = cbind(bseller_df, date_published)
+        bseller_df = cbind(bseller_df, book_type)
+                
+      } else
+      {
+        # Creates a new df that will be binded to our other df.
+        df = as.data.frame(fromJSON(json2)$results$books)
+        df = cbind(df, date_published)
+        df = cbind(df, book_type)
+        bseller_df = bind_rows(bseller_df,df)
+      }
+  }
+}
+```
+
+```{r}
+# Keep Relevent information
+bseller_df = bseller_df %>% 
+  select(title, book_type, rank, rank_last_week, weeks_on_list, 
+         author, publisher, description, date_published,
+         book_image, book_image_width, book_image_height)
+```
+
+
+
+### Export dataset as a csv file so we can use it in Shiny App
+
+```{r}
+write.csv(bseller_df, file = "bseller_df.csv")
+```
+
+
